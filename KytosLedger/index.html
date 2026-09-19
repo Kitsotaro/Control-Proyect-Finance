@@ -1,0 +1,764 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="oscuro">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Control Financiero y Bodega</title>
+  <script>
+    // Aplica el tema guardado ANTES de que se pinte la página, para evitar
+    // el parpadeo de un color equivocado al recargar (por ejemplo, ver un
+    // instante el fondo oscuro aunque hayas elegido el tema claro).
+    (function () {
+      var temaGuardado = localStorage.getItem('finanzas-tema');
+      if (temaGuardado) document.documentElement.setAttribute('data-theme', temaGuardado);
+    })();
+  </script>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/tema-oscuro.css">
+  <link rel="stylesheet" href="css/tema-claro.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div class="app-container">
+
+  <!-- SECCIÓN DE AUTENTICACIÓN -->
+  <div id="auth-section" class="card">
+    <h2>Kytos Ledger</h2>
+    <p class="subtext">Conéctate con Google Drive para acceder a la base de datos centralizada.</p>
+    <button id="btn-login" class="btn-primary" onclick="handleAuthClick()">Iniciar Sesión con Google</button>
+  </div>
+
+  <!-- PANEL PRINCIPAL -->
+  <div id="main-app" class="hidden">
+    
+    <!-- NAVEGACIÓN PRINCIPAL + botón de tema fijo a la derecha (fuera del
+         área que hace scroll, así siempre queda visible sin importar en
+         qué pestaña estés desplazado) -->
+    <div class="top-nav-row">
+      <div class="top-nav-wrapper">
+        <span id="nav-flecha-izq" class="nav-flecha nav-flecha-izq hidden" onclick="desplazarNav('izq')">‹</span>
+        <nav class="top-nav" id="top-nav">
+          <button class="nav-btn active" onclick="switchTab('tab-registrar', event)">➕ Registrar</button>
+          <button class="nav-btn" onclick="switchTab('tab-stock', event)">📦 Stock & Catálogo</button>
+          <button class="nav-btn" onclick="switchTab('tab-ventas', event)">📊 Dashboard</button>
+          <button class="nav-btn" onclick="switchTab('tab-analitica', event)">🔭 Panorama</button>
+          <button class="nav-btn" onclick="switchTab('tab-costos', event)">💵 Costos Operativos</button>
+        </nav>
+        <span id="nav-flecha-der" class="nav-flecha nav-flecha-der hidden" onclick="desplazarNav('der')">›</span>
+      </div>
+      <button type="button" id="btn-toggle-tema" class="btn-icon-tema" onclick="alternarTema()" aria-label="Cambiar tema">☀️</button>
+    </div>
+
+    <!-- FRANJA DE ESTADO -->
+    <div id="status" class="status-bar">Listo para conectar.</div>
+
+    <!-- PESTAÑA 1: REGISTRO (ENTRADA / VENTA) -->
+    <section id="tab-registrar" class="tab-content active">
+      <div class="card">
+        <h3>Registrar Movimiento</h3>
+        
+        <!-- Segmented Toggle -->
+        <div class="segmented-control">
+          <button type="button" id="btn-tipo-entrada" class="toggle-btn active" onclick="setTipoMovimiento('ENTRADA')">📥 Entrada (Compra)</button>
+          <button type="button" id="btn-tipo-venta" class="toggle-btn" onclick="setTipoMovimiento('VENTA')">📤 Venta (Despacho)</button>
+        </div>
+
+        <div class="log-timestamp-row">
+          <span class="log-timestamp-label">Hora de captura: <span id="log-timestamp-live">--:--:--</span></span>
+          <button type="button" class="btn-secondary-sm" onclick="toggleOpcionesImportar()">📊 Importar datos Excel</button>
+          <button type="button" class="btn-secondary-sm" onclick="limpiarFormularioActivo()">🧹 Limpiar</button>
+        </div>
+
+        <div id="opciones-importar" class="import-row hidden">
+          <button type="button" class="btn-secondary-sm" onclick="descargarPlantillaExcel()">📄 Plantilla</button>
+          <button type="button" class="btn-secondary-sm" onclick="document.getElementById('input-importar-excel').click()">📂 Importar Excel</button>
+          <input type="file" id="input-importar-excel" accept=".xlsx,.xls,.csv" class="hidden" onchange="onArchivoExcelSeleccionado(event)">
+        </div>
+        <div class="field-hint hidden" id="hint-importar" style="margin: -10px 0 16px 0;">Cantidad positiva = Entrada · Cantidad negativa = Venta de un producto ya existente</div>
+
+        <!-- FECHA Y FOLIO -->
+        <div class="form-row">
+          <div class="form-group">
+            <label>Folio / Transacción</label>
+            <input type="text" id="trans-id" class="input-disabled" readonly />
+          </div>
+          <div class="form-group">
+            <label>Fecha Movimiento</label>
+            <input type="date" id="fecha-mov" required />
+          </div>
+        </div>
+
+        <!-- FORMULARIO DE ENTRADA -->
+        <form id="form-entrada" onsubmit="guardarMovimiento(event)">
+
+          <!-- Fila 1: Buscador (protagonista, 4/5 del ancho) + Cantidad (1/5 — un empaque nunca pasa de 4 dígitos) -->
+          <div class="form-row">
+            <div class="form-group autocomplete-wrapper" style="flex: 4;">
+              <label>🔍 Buscar Producto (Código SKU o Texto)</label>
+              <input type="text" id="buscar-producto-entrada" placeholder="Buscar por SKU o nombre..." autocomplete="off" required />
+              <div id="dropdown-productos-entrada" class="autocomplete-dropdown hidden"></div>
+            </div>
+            <div class="form-group" style="flex: 1;">
+              <label>Cantidad</label>
+              <input type="number" step="any" id="mov-cantidad-in" placeholder="Ej: 10" required />
+            </div>
+          </div>
+
+          <!-- Fila 2: Marca + Producto -->
+          <div class="form-row">
+            <div class="form-group autocomplete-wrapper">
+              <label>Marca / Empresa</label>
+              <input type="text" id="prod-marca" placeholder="Ej: La Constancia" autocomplete="off" required />
+              <div id="ac-marca" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-marca" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+            <div class="form-group autocomplete-wrapper">
+              <label>Producto / Línea</label>
+              <input type="text" id="prod-linea" placeholder="Ej: Pepsi" autocomplete="off" required />
+              <div id="ac-linea" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-linea" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+          </div>
+
+          <!-- Fila 3: Tipo de Empaque + Presentación + Contenido/Vol. -->
+          <div class="form-row">
+            <div class="form-group autocomplete-wrapper">
+              <label>Tipo de Empaque</label>
+              <input type="text" id="prod-tipo-empaque" placeholder="Caja, Sixpack, etc." autocomplete="off" required />
+              <div id="ac-tipoempaque" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-tipoempaque" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+            <div class="form-group autocomplete-wrapper">
+              <label>Presentación</label>
+              <input type="text" id="prod-presentacion" placeholder="Botella, Lata, Tetra" autocomplete="off" required />
+              <div id="ac-presentacion" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-presentacion" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+            <div class="form-group autocomplete-wrapper">
+              <label>Contenido / Vol.</label>
+              <input type="text" id="prod-volumen" placeholder="Ej: 1.5 Lts, 600g" autocomplete="off" required />
+              <div id="ac-volumen" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-volumen" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+          </div>
+
+          <!-- Fila 4: Variante + Cantidad Bonificada -->
+          <div class="form-row">
+            <div class="form-group autocomplete-wrapper">
+              <label>Variante (Opcional)</label>
+              <input type="text" id="prod-variante" placeholder="Uva Fresa Crunch" autocomplete="off" />
+              <div id="ac-variante" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-variante" class="hint-nuevo-valor hidden">Nuevo valor</span>
+            </div>
+            <div class="form-group" id="group-bonificacion">
+              <label>Cantidad Bonificada (Regalo / Promoción)</label>
+              <input type="number" step="any" id="mov-bonificacion" placeholder="0" />
+            </div>
+          </div>
+
+          <!-- Fila Precios -->
+          <div class="price-section-container">
+            <h3 class="price-title">💰 Tarifas y Precios de Operación</h3>
+            <div class="form-row">
+              <div class="form-group" id="group-precio-distribuidor">
+                <label>Precio Distribuidor (Costo)</label>
+                <input type="number" step="0.00001" min="0" inputmode="decimal" id="precio-distribuidor" placeholder="00.000" required oninput="validarPrecioDistribuidor(this)" />
+                <span id="warn-pdist" class="warning-text hidden">Máximo 5 decimales permitidos</span>
+              </div>
+              <div class="form-group">
+                <label>Precio Consumidor (Venta)</label>
+                <input type="number" step="0.01" min="0" inputmode="decimal" id="precio-consumidor" placeholder="0.00" required oninput="validarPrecioConsumidor(this)" />
+                <span id="warn-pcons" class="warning-text hidden">Máximo 2 decimales permitidos</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="profit-preview-row">
+            <span class="profit-preview-item">💵 Ganancia por <span id="profit-unit-label">Unidad</span>: <strong id="profit-ganancia">$0.00</strong></span>
+            <span class="profit-preview-item">📈 Margen: <strong id="profit-margen">0%</strong></span>
+          </div>
+
+          <button type="submit" id="btn-save-in" class="btn-primary" disabled>Guardar Entrada</button>
+          <div id="leyenda-producto-nuevo" class="leyenda-nuevo-producto hidden">Esto generará un producto nuevo a la base de datos</div>
+        </form>
+
+        <!-- FORMULARIO DE VENTA -->
+        <form id="form-venta" class="hidden" onsubmit="guardarMovimiento(event)">
+          <!-- Buscador directo del catálogo -->
+          <div class="form-group autocomplete-wrapper">
+            <label>🔍 Buscar Producto (Código SKU o Texto)</label>
+            <input type="text" id="buscar-producto-venta" placeholder="Buscar por SKU o nombre..." autocomplete="off" required />
+            <div id="dropdown-productos-venta" class="autocomplete-dropdown hidden"></div>
+          </div>
+
+          <!-- Campos Deshabilitados autocompletados -->
+          <div class="form-row">
+            <div class="form-group">
+              <label>Marca</label>
+              <input type="text" id="venta-prod-marca" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            </div>
+            <div class="form-group">
+              <label>Producto</label>
+              <input type="text" id="venta-prod-linea" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            </div>
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label>Presentación</label>
+              <input type="text" id="venta-prod-presentacion" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            </div>
+            <div class="form-group">
+              <label>Variante</label>
+              <input type="text" id="venta-prod-variante" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            </div>
+            <div class="form-group">
+              <label>Cont. / Vol.</label>
+              <input type="text" id="venta-prod-volumen" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            </div>
+          </div>
+
+          <!-- Tipo de Empaque (informativo, autocompletado al seleccionar el producto) -->
+          <div class="form-group">
+            <label>📦 Tipo de Empaque a Despachar</label>
+            <input type="text" id="venta-prod-tipo-empaque" class="input-disabled" readonly tabindex="-1" placeholder="--" />
+            <span class="field-hint">Usar esta unidad para el despacho</span>
+          </div>
+
+          <!-- Cantidad y Botón Guardar -->
+          <div class="form-group">
+            <label>Cantidad (Salida)</label>
+            <input type="number" step="any" id="mov-cantidad-out" placeholder="Ej: 2" required />
+          </div>
+
+          <button type="submit" id="btn-save-out" class="btn-primary btn-sale" disabled>Registrar Venta</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- PESTAÑA 2: STOCK & CATÁLOGO -->
+    <section id="tab-stock" class="tab-content">
+      <div class="metrics-grid">
+        <div class="card metric-card accent-blue" style="flex: 2;">
+          <div class="metric-tabs">
+            <button type="button" class="metric-tab-btn active" id="btn-vb-total" onclick="cambiarVistaValorBodega('TOTAL')">Valor Total</button>
+            <button type="button" class="metric-tab-btn" id="btn-vb-invertido" onclick="cambiarVistaValorBodega('INVERTIDO')">Invertido</button>
+            <span class="info-icon" id="valor-bodega-info-icon" onclick="mostrarInfoValorBodega(this)">ⓘ</span>
+          </div>
+          <span class="metric-value metric-value-lg" id="metric-valor-bodega">$0.00</span>
+        </div>
+        <div class="card metric-card accent-green">
+          <span class="metric-title">Total en Bodega <span class="info-icon" onclick="toggleInfoTip(this, 'Suma del stock de todos los productos activos, combinando todos los tipos de empaque (cajas + fardos + sixpacks, etc). Ej: 6 fardos + 4 cajas = 10.')">ⓘ</span></span>
+          <span class="metric-value metric-value-lg" id="metric-total-unidades">0</span>
+        </div>
+      </div>
+
+        <div class="card">
+        <div class="card-header-flex">
+          <h3>Distribución de Stock <span class="info-icon hidden" id="info-icono-barras" onclick="toggleInfoTip(this, 'Cada barra es el % que representa DEL TOTAL del nivel actual (no se compara contra la barra más alta). Por eso aunque un producto sea el líder, no llega a 100% salvo que fuera el único con stock — la suma de todas las barras del nivel siempre da 100%.')">ⓘ</span></h3>
+          <div class="chart-controls-row">
+            <select id="filter-cantidad-barras" class="chart-view-select hidden" onchange="onCambioFiltroCantidadBarras()">
+              <option value="TODO">Todo</option>
+              <option value="10">Top 10 Items</option>
+              <option value="TOP5">Top 5 Items</option>
+            </select>
+            <button type="button" class="btn-secondary-sm" id="btn-tipo-grafico" onclick="alternarTipoGraficoStock()">📊 Ver en Barras</button>
+          </div>
+        </div>
+        <div id="chart-breadcrumb" class="chart-breadcrumb"></div>
+        <div class="chart-container">
+          <canvas id="stockPieChart"></canvas>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header-flex">
+          <h3>Inventario / Catálogo</h3>
+        </div>
+
+                <div class="stock-filter-row">
+          <div class="filter-col filter-col-buscar">
+            <label class="filter-col-label">Buscar producto en bodega</label>
+            <input type="text" id="buscar-stock" placeholder="SKU, marca, producto..." autocomplete="off" oninput="renderizarListaStock()" />
+          </div>
+          <div class="filter-col">
+            <label class="filter-col-label">Tipo de Producto</label>
+            <select id="filter-tipo-empaque" class="chart-view-select" onchange="onCambioFiltroEmpaque()"></select>
+          </div>
+          <div class="filter-col">
+            <label class="filter-col-label">Control de Semáforo</label>
+            <div id="umbral-inputs-wrapper" class="umbral-inputs">
+              <input type="number" id="umbral-stock-bajo" placeholder="Bajo" title="Stock Bajo: en o por debajo de este número, semáforo rojo" onchange="onCambioUmbral()">
+              <input type="number" id="umbral-stock-alto" placeholder="Alto" title="Stock Alto: en o por encima de este número, semáforo verde" onchange="onCambioUmbral()">
+            </div>
+          </div>
+        </div>
+
+        <div class="filter-bar">
+          <label class="checkbox-container">
+            <input type="checkbox" id="chk-mostrar-obsoletos" onchange="renderizarListaStock()">
+            <span>Mostrar Obsoletos</span>
+          </label>
+        </div>
+
+        <div id="lista-productos-stock" class="product-list"></div>
+      </div>
+    </section>
+
+    <!-- PESTAÑA 3: DASHBOARD DE VENTAS -->
+    <section id="tab-ventas" class="tab-content">
+      <div class="card filter-card">
+        <label class="checkbox-container" style="margin-bottom: 12px;">
+          <input type="checkbox" id="chk-rango-fechas" onchange="onToggleRangoFechas()">
+          <span>Usar rango de fechas</span>
+        </label>
+        <div class="form-row align-center">
+          <div class="form-group" style="margin-bottom:0;">
+            <label>📅 <span id="label-fecha-inicio">Filtrar por Fecha</span></label>
+            <input type="date" id="filtro-fecha-ventas" onchange="renderizarVentasHoy()" />
+          </div>
+          <div class="form-group hidden" id="group-fecha-fin" style="margin-bottom:0;">
+            <label>📅 Hasta</label>
+            <input type="date" id="filtro-fecha-fin" onchange="renderizarVentasHoy()" />
+          </div>
+          <button class="btn-secondary-sm" style="margin-top: 18px;" onclick="resetearFiltroFechaVentas()">Ver Hoy</button>
+        </div>
+      </div>
+
+      <div class="metrics-grid">
+        <div class="card metric-card accent-blue">
+          <span class="metric-title" id="metric-venta-hoy-titulo">Ventas Totales <span class="info-icon" onclick="toggleInfoTip(this, 'Suma de los ingresos por ventas (cantidad × precio consumidor) en el período seleccionado.')">ⓘ</span></span>
+          <span class="metric-value" id="metric-venta-hoy">$0.00</span>
+        </div>
+        <div class="card metric-card accent-green">
+          <span class="metric-title" id="metric-utilidad-hoy-titulo">Margen/Ganancia <span class="info-icon" onclick="toggleInfoTip(this, 'Suma de la utilidad neta (precio de venta menos costo) generada por las ventas del período seleccionado.')">ⓘ</span></span>
+          <span class="metric-value" id="metric-utilidad-hoy">$0.00</span>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 id="detalle-titulo">Detalle de Salidas</h3>
+        <div class="segmented-control">
+          <button type="button" id="btn-dash-entradas" class="toggle-btn" onclick="setModoDashboard('ENTRADA')">📥 Entradas</button>
+          <button type="button" id="btn-dash-salidas" class="toggle-btn active" onclick="setModoDashboard('VENTA')">📤 Salidas</button>
+        </div>
+
+        <div class="filter-bar">
+          <button type="button" class="btn-secondary-sm" onclick="toggleBuscadorDashboard()">🔍 Buscar</button>
+        </div>
+        <div class="form-group hidden" id="grupo-buscar-dashboard">
+          <input type="text" id="buscar-dashboard" placeholder="Buscar por SKU, marca, producto, presentación..." autocomplete="off" oninput="renderizarVentasHoy()" />
+        </div>
+
+        <div id="lista-ventas-hoy" class="product-list"></div>
+      </div>
+    </section>
+
+       <!-- PESTAÑA 4: ANALÍTICA -->
+    <section id="tab-analitica" class="tab-content">
+      <div class="card">
+        <h3>
+          💰 Costo Promedio Ponderado (CPP) 
+          <span 
+            class="info-icon" 
+            onclick="toggleInfoTip(this, 'Fórmula: suma de (cantidad comprada × precio pagado) en cada compra, dividido entre el total de unidades compradas.\n\n¿Para qué sirve? Saber cuánto te cuesta en promedio cada unidad que tienes en bodega ahora mismo, aunque hayas comprado a precios distintos en momentos distintos.\n\nEl valor &quot;En bodega&quot; que aparece bajo cada precio es ese CPP multiplicado por el stock actual — cuánto tienes invertido en ese producto específico ahora mismo (Valorización de Bodega).')"
+          >ⓘ</span>
+        </h3>
+        <div class="leyenda-nuevo-producto">Se recalcula automáticamente con cada nueva compra registrada</div>
+
+        <div class="form-group" style="margin-top: 12px;">
+          <input 
+            type="text" 
+            id="buscar-cpp" 
+            placeholder="Buscar por SKU, marca, producto..." 
+            autocomplete="off" 
+            oninput="renderizarListaCPP()" 
+          />
+        </div>
+        <div class="filter-bar">
+          <label class="checkbox-container">
+            <input type="checkbox" id="chk-decimales-cpp" onchange="onCambioDecimalesCPP()">
+            <span>Ver 5 decimales</span>
+          </label>
+        </div>
+
+        <div id="lista-cpp" class="product-list"></div>
+      </div>
+
+            <div class="card">
+        <h3>📈 ROI</h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Preset</label>
+            <!-- Opciones rellenadas por JS desde PRESETS_PERIODO (analitica.js) — una sola lista fuente para los 3 selectores de período de esta pestaña. -->
+            <select id="filter-periodo-roi" class="chart-view-select" onchange="onCambioPeriodoROI()" style="width: 100%; max-width: none;"></select>
+          </div>
+          <div class="form-group">
+            <label>Desde</label>
+            <input type="date" id="roi-fecha-inicio" onchange="onCambioFechaPersonalizadaROI()" />
+          </div>
+          <div class="form-group">
+            <label>Hasta</label>
+            <input type="date" id="roi-fecha-fin" onchange="onCambioFechaPersonalizadaROI()" />
+          </div>
+        </div>
+
+        <div class="roi-resumen-row">
+          <div class="filter-col">
+            <label class="filter-col-label roi-umbral-label">Umbral de ganancia (%):<br>Crítico / Meta</label>
+            <div class="umbral-inputs">
+              <input type="number" id="umbral-roi-bajo" placeholder="Crítico" min="0" max="100" title="Igual o por debajo de este %: semáforo rojo (crítico)" onchange="onCambioUmbralROI()">
+              <input type="number" id="umbral-roi-alto" placeholder="Meta" min="0" max="100" title="Igual o por encima de este %: semáforo verde (meta cumplida)" onchange="onCambioUmbralROI()">
+            </div>
+          </div>
+
+          <div class="roi-negocio-card">
+            <span class="roi-negocio-label">ROI del Negocio <span class="info-icon" onclick="toggleInfoTip(this, 'Fórmula: (ganancia neta total ÷ inversión total) × 100, en el período elegido arriba.\n\n¿Para qué sirve? Por cada $1 que invertiste en TODO el negocio en este período, cuánto te devolvió en ganancia.')">ⓘ</span></span>
+            <strong class="roi-negocio-valor" id="metric-roi-global">0%</strong>
+          </div>
+        </div>
+
+        <div class="roi-producto-subtitulo">ROI y Rotación por Producto <span class="info-icon" onclick="toggleInfoTip(this, 'ROI: (ganancia neta del producto ÷ inversión en ese producto) × 100, en el período elegido arriba. Por cada $1 que invertiste en ESE producto, cuánto te devolvió.\n\nRotación: unidades vendidas en el período ÷ stock actual. Un producto puede tener buen margen y aun así venderse tan poco que el dinero invertido en él quede dormido en bodega — la Rotación avisa eso. Ej: 3x significa que en el período vendiste 3 veces lo que tienes ahora en existencia.')">ⓘ</span></div>
+
+        <div class="form-group">
+          <input type="text" id="buscar-roi-productos" placeholder="Buscar por SKU, marca, producto..." autocomplete="off" oninput="renderizarListaROIProducto()" />
+        </div>
+        <div id="lista-roi-productos" class="product-list"></div>
+      </div>
+
+      <div class="card">
+        <h3>⚖️ Punto de Equilibrio <span class="info-icon" onclick="toggleInfoTip(this, 'Cuánto necesitas VENDER en este período para cubrir tus gastos fijos — ni ganar ni perder. Todo lo que vendas de ahí en adelante ya es ganancia real.')">ⓘ</span></h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Preset</label>
+            <select id="filter-periodo-equilibrio" class="chart-view-select" onchange="onCambioPeriodoEquilibrio()" style="width: 100%; max-width: none;"></select>
+          </div>
+          <div class="form-group">
+            <label>Desde</label>
+            <input type="date" id="equilibrio-fecha-inicio" onchange="onCambioFechaPersonalizadaEquilibrio()" />
+          </div>
+          <div class="form-group">
+            <label>Hasta</label>
+            <input type="date" id="equilibrio-fecha-fin" onchange="onCambioFechaPersonalizadaEquilibrio()" />
+          </div>
+        </div>
+
+        <div class="roi-resumen-row">
+          <div class="roi-negocio-card">
+            <span class="roi-negocio-label">Gastos Fijos <span class="info-icon" onclick="toggleInfoTip(this, 'Suma de tus Costos Operativos (Mantenimiento, Alquiler, Seguro, Luz, Agua, Viáticos, Combustible) registrados en este período.')">ⓘ</span></span>
+            <strong class="roi-negocio-valor" id="metric-equilibrio-gastos">$0.00</strong>
+          </div>
+          <div class="roi-negocio-card">
+            <span class="roi-negocio-label">Margen de Contribución <span class="info-icon" onclick="toggleInfoTip(this, 'De cada $1 que vendes, cuánto te queda de ganancia bruta antes de restar gastos fijos. Se calcula con tus ventas de este mismo período.')">ⓘ</span></span>
+            <strong class="roi-negocio-valor" id="metric-equilibrio-margen">0%</strong>
+          </div>
+        </div>
+
+        <div id="equilibrio-resultado"></div>
+      </div>
+
+      <div class="card">
+        <h3>📉 Proyección de Agotamiento <span class="info-icon" onclick="toggleInfoTip(this, 'Fórmula: ventas de los últimos X días ÷ X = ritmo diario de venta. Stock actual ÷ ritmo diario = días que quedan al ritmo actual.\n\n¿Para qué sirve? Saber con cuánta anticipación necesitas reabastecer cada producto, antes de que se agote. Ajusta la ventana de días si quieres una proyección más sensible a lo reciente (ventana chica) o más estable (ventana grande).')">ⓘ</span></h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Ventana de días a considerar</label>
+            <input type="number" id="proyeccion-ventana-dias" min="1" value="30" onchange="onCambioVentanaDias()">
+          </div>
+          <div class="form-group">
+            <label class="filter-col-label roi-umbral-label">Umbral (días):<br>Crítico / Cómodo</label>
+            <div class="umbral-inputs">
+              <input type="number" id="umbral-proyeccion-bajo" placeholder="Crítico" min="0" title="Igual o por debajo de estos días: semáforo rojo (urgente)" onchange="onCambioUmbralProyeccion()">
+              <input type="number" id="umbral-proyeccion-alto" placeholder="Cómodo" min="0" title="Igual o por encima de estos días: semáforo verde (cómodo)" onchange="onCambioUmbralProyeccion()">
+            </div>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <input type="text" id="buscar-proyeccion" placeholder="Buscar por SKU, marca, producto..." autocomplete="off" oninput="renderizarListaProyeccion()" />
+        </div>
+        <div id="lista-proyeccion" class="product-list"></div>
+      </div>
+
+      <div class="card">
+        <h3>⛽ Combustible <span class="info-icon" onclick="toggleInfoTip(this, 'Muestra cuánto combustible y dinero gastó cada vehículo activo en el período elegido abajo, los kilómetros recorridos y el rendimiento promedio (km por galón). Si un vehículo lleva muchos días sin cargar combustible, aparece un aviso — sin importar el período que estés viendo.')">ⓘ</span></h3>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label>Preset</label>
+            <!-- Opciones rellenadas por JS desde PRESETS_PERIODO (analitica.js). -->
+            <select id="filter-periodo-combustible" class="chart-view-select" onchange="onCambioPeriodoCombustible()" style="width: 100%; max-width: none;"></select>
+          </div>
+          <div class="form-group">
+            <label>Desde</label>
+            <input type="date" id="combustible-fecha-inicio" onchange="onCambioFechaPersonalizadaCombustible()" />
+          </div>
+          <div class="form-group">
+            <label>Hasta</label>
+            <input type="date" id="combustible-fecha-fin" onchange="onCambioFechaPersonalizadaCombustible()" />
+          </div>
+        </div>
+
+        <div class="roi-resumen-row">
+          <div class="roi-negocio-card">
+            <span class="roi-negocio-label">Galones (flotilla)</span>
+            <strong class="roi-negocio-valor" id="metric-combustible-galones">0</strong>
+          </div>
+          <div class="roi-negocio-card">
+            <span class="roi-negocio-label">Gastado (flotilla)</span>
+            <strong class="roi-negocio-valor" id="metric-combustible-gastado">$0.00</strong>
+          </div>
+        </div>
+
+        <div id="lista-combustible-analitica" class="product-list"></div>
+      </div>
+    </section>
+
+    <!-- PESTAÑA 5: COSTOS OPERATIVOS -->
+    <section id="tab-costos" class="tab-content">
+      <div class="card">
+        <div class="segmented-control">
+          <button type="button" id="btn-costos-fijos" class="toggle-btn active" onclick="setVistaCostos('FIJOS')">🧾 Costos Fijos</button>
+          <button type="button" id="btn-costos-combustible" class="toggle-btn" onclick="setVistaCostos('COMBUSTIBLE')">⛽ Combustible</button>
+        </div>
+      </div>
+
+      <!-- VISTA: COSTOS FIJOS (Mantenimiento, Alquiler, Seguro, Luz, Agua, Viáticos) -->
+      <div id="vista-costos-fijos" class="vista-columna">
+        <div class="card">
+          <h3>💵 Registrar Costo Operativo</h3>
+
+          <form id="form-costos" onsubmit="guardarCostoOperativo(event)">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Folio</label>
+                <input type="text" id="costo-folio" class="input-disabled" readonly />
+              </div>
+              <div class="form-group">
+                <label>Fecha del Gasto</label>
+                <input type="date" id="costo-fecha" required />
+              </div>
+            </div>
+
+            <div class="form-group autocomplete-wrapper">
+              <label>Categoría</label>
+              <input type="text" id="costo-categoria" placeholder="Ej: Luz, Alquiler, Mantenimiento..." autocomplete="off" required />
+              <div id="ac-categoria-costo" class="autocomplete-dropdown hidden"></div>
+              <span id="hint-categoria-costo" class="hint-nuevo-valor hidden">Categoría nueva</span>
+            </div>
+
+            <div class="form-group">
+              <label>Monto ($)</label>
+              <input type="number" step="0.01" min="0" id="costo-monto" placeholder="0.00" required />
+            </div>
+
+            <div class="form-group">
+              <label>Descripción (Opcional)</label>
+              <input type="text" id="costo-descripcion" placeholder="Proveedor, referencia del gasto, notas adicionales, etc" autocomplete="off" />
+            </div>
+
+            <button type="submit" id="btn-save-costo" class="btn-primary">Guardar Costo</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>📋 Historial de Costos Operativos</h3>
+          <div id="lista-costos" class="product-list"></div>
+        </div>
+      </div>
+
+      <!-- VISTA: COMBUSTIBLE (log de cargas por vehículo) -->
+      <div id="vista-combustible" class="vista-columna hidden">
+        <div class="card">
+          <h3>⛽ Registrar Carga de Combustible</h3>
+
+          <form id="form-combustible" onsubmit="guardarCargaCombustible(event)">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Folio</label>
+                <input type="text" id="combustible-folio" class="input-disabled" readonly />
+              </div>
+              <div class="form-group">
+                <label>Fecha</label>
+                <input type="date" id="combustible-fecha" required />
+              </div>
+            </div>
+
+            <div class="form-group autocomplete-wrapper">
+              <label>🔍 Vehículo (Placa, Marca o Modelo)</label>
+              <input type="text" id="buscar-vehiculo" placeholder="Buscar vehículo..." autocomplete="off" required />
+              <div id="dropdown-vehiculos" class="autocomplete-dropdown hidden"></div>
+            </div>
+            <div class="field-hint" id="hint-odometro-anterior"></div>
+
+            <div class="form-row">
+              <div class="form-group">
+                <label>Odómetro Actual (km)</label>
+                <input type="number" step="1" min="0" id="combustible-odometro" placeholder="Ej: 45320" required oninput="validarOdometro(this)" />
+              </div>
+              <div class="form-group">
+                <label>Galones Cargados</label>
+                <input type="number" step="any" min="0" id="combustible-galones" placeholder="Ej: 10" required oninput="validarGalones(this)" />
+                <span id="warn-galones" class="warning-text hidden">Máximo 3 dígitos enteros y 5 decimales</span>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Monto Pagado ($)</label>
+              <input type="number" step="0.01" min="0" id="combustible-monto" placeholder="0.00" required oninput="validarMontoCombustible(this)" />
+              <span id="warn-monto-combustible" class="warning-text hidden">Máximo 2 decimales permitidos</span>
+            </div>
+
+            <button type="submit" id="btn-save-combustible" class="btn-primary" disabled>Guardar Carga</button>
+          </form>
+        </div>
+
+        <div class="card">
+          <h3>📋 Historial de Combustible</h3>
+          <div id="lista-combustible" class="product-list"></div>
+        </div>
+      </div>
+    </section>
+
+<!-- MODAL EDICIÓN -->
+<div id="modal-editar" class="modal hidden">
+  <div class="modal-content card">
+    <h3 id="modal-titulo">Editar Producto</h3>
+    <input type="hidden" id="modal-id-producto">
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Marca</label>
+        <input type="text" id="modal-marca">
+      </div>
+      <div class="form-group">
+        <label>Producto</label>
+        <input type="text" id="modal-linea">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Presentación</label>
+        <input type="text" id="modal-presentacion">
+      </div>
+      <div class="form-group">
+        <label>Contenido / Vol.</label>
+        <input type="text" id="modal-volumen">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Variante</label>
+        <input type="text" id="modal-variante">
+      </div>
+      <div class="form-group">
+        <label>Tipo de Empaque</label>
+        <input type="text" id="modal-tipo-empaque">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label for="modal-p-distributor">Precio Distribuidor ($)</label>
+      <input type="number" id="modal-p-distributor" step="0.00001" min="0" oninput="validarPrecioDistribuidor(this)">
+    </div>
+    
+    <div class="form-group">
+      <label for="modal-p-consumer">Precio Consumidor ($)</label>
+      <input type="number" id="modal-p-consumer" step="0.01" min="0" oninput="validarPrecioConsumidor(this)">
+    </div>
+
+    <div class="form-group">
+      <label>Estado del Producto</label>
+      <div class="segmented-control">
+        <button type="button" id="btn-estado-activo" class="toggle-btn" onclick="setEstadoModal('ACTIVO')">🔄 Activo</button>
+        <button type="button" id="btn-estado-obsoleto" class="toggle-btn" onclick="setEstadoModal('OBSOLETO')">🚫 Obsoleto</button>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-primary btn-nuevo-producto" onclick="guardarCambiosModal()">Guardar Cambios</button>
+      <button class="btn-secondary" onclick="cerrarModal()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL VEHÍCULO NUEVO (usado desde Costos Operativos → Combustible) -->
+<div id="modal-vehiculo" class="modal hidden">
+  <div class="modal-content card">
+    <h3>🚚 Registrar Vehículo Nuevo</h3>
+
+    <div class="form-group">
+      <label>Placa</label>
+      <input type="text" id="vehiculo-placa" autocomplete="off" required>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Marca</label>
+        <input type="text" id="vehiculo-marca" autocomplete="off" required>
+      </div>
+      <div class="form-group">
+        <label>Modelo</label>
+        <input type="text" id="vehiculo-modelo" autocomplete="off" required>
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Color</label>
+        <input type="text" id="vehiculo-color" autocomplete="off">
+      </div>
+      <div class="form-group">
+        <label>Tipo de Combustible</label>
+        <select id="vehiculo-tipo-combustible" required>
+          <option value="" disabled selected>Selecciona</option>
+          <option value="Gasolina">Gasolina</option>
+          <option value="Diésel">Diésel</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-primary btn-nuevo-producto" onclick="guardarVehiculoNuevo()">Guardar Vehículo</button>
+      <button class="btn-secondary" onclick="cerrarModalVehiculo()">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- DIÁLOGO PERSONALIZADO (reemplaza alert()/confirm() nativos del navegador) -->
+<div id="dialogo-personalizado" class="modal hidden">
+  <div class="modal-content card">
+    <h3 id="dialogo-titulo">Aviso</h3>
+    <p id="dialogo-mensaje" class="subtext"></p>
+    <div class="modal-actions">
+      <button id="dialogo-btn-confirmar" class="btn-primary">Entendido</button>
+      <button id="dialogo-btn-cancelar" class="btn-secondary hidden">Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js" async defer></script>
+
+<!-- Módulos de la app, en orden: core.js primero (lo usan todos los demás) -->
+<script src="js/core.js"></script>
+<script src="js/sku.js"></script>
+<script src="js/tema.js"></script>
+<script src="js/registro.js"></script>
+<script src="js/stock.js"></script>
+<script src="js/dashboard.js"></script>
+<script src="js/graficos.js"></script>
+<script src="js/ventas.js"></script>
+<script src="js/analitica.js"></script>
+<script src="js/costos.js"></script>
+<script src="js/combustible.js"></script>
+
+</body>
+</html>

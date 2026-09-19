@@ -1,0 +1,26 @@
+/* TEMA OSCURO — mismos valores que tenía el proyecto originalmente. */
+
+:root[data-theme="oscuro"] {
+  --bg: #0f172a;
+  --card: #1e293b;
+  --card-border: #334155;
+  --text: #f8fafc;
+  --subtext: #94a3b8;
+  --accent-green: #22c55e;
+  --accent-green-activo: #16a34a;
+  --accent-blue: #3b82f6;
+  --accent-red: #ef4444;
+   --accent-yellow: #eab308;
+  --accent-orange: #f97316;
+  --accent-blue-activo: #2563eb;
+  --accent-red-activo: #dc2626;
+  --accent-yellow-texto: #eab308;
+  --input-bg: #0f172a;
+  --hover-overlay: rgba(255, 255, 255, 0.08);
+}
+
+/* El ícono nativo del selector de fecha es oscuro por defecto;
+   en tema oscuro hay que invertirlo para que se alcance a ver. */
+:root[data-theme="oscuro"] input[type="date"]::-webkit-calendar-picker-indicator {
+  filter: invert(1);
+}
