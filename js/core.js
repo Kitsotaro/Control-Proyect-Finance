@@ -24,7 +24,7 @@ const DB_FILE_NAME = 'StockCentral_DB';
 //
 // Reemplazá esto por la URL que te da Apps Script al publicar el
 // despliegue (ver instrucciones aparte) — termina en /exec.
-const URL_VERIFICACION_ACCESO = 'https://script.google.com/macros/s/TU_ID_DE_DESPLIEGUE/exec';
+const URL_VERIFICACION_ACCESO = 'https://script.google.com/macros/s/AKfycby_YtBiiqthE8vDZ7VAB-XUmsbVL2OqsPBG_CBiF6EuGXIueOKU8TwtMU5Ge39LAd-mZg/exec';
 
 const DEFAULT_STOCK_MIN = 4;
 const DEFAULT_STOCK_MAX = 6;
