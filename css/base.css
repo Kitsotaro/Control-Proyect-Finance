@@ -718,6 +718,27 @@ input::placeholder {
   background: var(--hover-overlay);
 }
 
+/* Footer con links a Privacy/Terms en la pantalla de login — pedido por
+   Google para la verificación de la app en producción (necesita ver el
+   propósito de la app y los links legales antes del botón de Google). */
+.auth-footer {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 0.72rem;
+  display: flex;
+  justify-content: center;
+  gap: 14px;
+}
+
+.auth-footer a {
+  color: var(--subtext);
+  text-decoration: underline;
+}
+
+.auth-footer a:hover {
+  color: var(--text);
+}
+
 /* ===== MODAL (faltaba por completo: sin esto, el editor no se comporta como modal) ===== */
 .modal {
   position: fixed;

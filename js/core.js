@@ -14,6 +14,18 @@ const CLIENT_ID = '1070607567316-mdbd97lbkprgpc4spj71e5f8anovr6it.apps.googleuse
 const SCOPES = 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/spreadsheets';
 const DB_FILE_NAME = 'StockCentral_DB';
 
+// CONTROL DE ACCESO: quién puede usar la app además de vos.
+//
+// Verifica el correo contra una hoja de Google Sheets PRIVADA (tuya, no
+// publicada) a través de un Apps Script propio — el script corre con TUS
+// permisos y solo devuelve un sí/no por correo consultado, nunca la lista
+// completa. Así la hoja de licencias nunca queda expuesta, ni siquiera
+// como CSV público (que sí expondría los correos a cualquiera con el link).
+//
+// Reemplazá esto por la URL que te da Apps Script al publicar el
+// despliegue (ver instrucciones aparte) — termina en /exec.
+const URL_VERIFICACION_ACCESO = 'https://script.google.com/macros/s/TU_ID_DE_DESPLIEGUE/exec';
+
 const DEFAULT_STOCK_MIN = 4;
 const DEFAULT_STOCK_MAX = 6;
 
@@ -80,9 +92,56 @@ function checkAuthReady() {
   }
 }
 
+// Correo de la cuenta ya conectada — about.get funciona con el scope
+// drive.file que ya usa la app (no hace falta pedir un scope nuevo solo
+// para saber quién sos).
+async function obtenerCorreoUsuario() {
+  try {
+    const res = await gapi.client.drive.about.get({ fields: 'user' });
+    return (res.result.user && res.result.user.emailAddress)
+      ? res.result.user.emailAddress.toLowerCase().trim()
+      : '';
+  } catch (err) {
+    return '';
+  }
+}
+
+// Consulta el Apps Script (ver URL_VERIFICACION_ACCESO) para saber si
+// este correo está autorizado. Ante cualquier falla de conexión, niega el
+// acceso por defecto (fail-closed) — para un control de acceso, es más
+// seguro trabarse por un problema de red que dejar pasar a alguien por
+// error. Si preferís lo contrario (dejar pasar cuando el chequeo falla),
+// cambiá el "return false" del catch por "return true".
+async function verificarAccesoUsuario(email) {
+  if (!email) return false;
+  try {
+    const resp = await fetch(`${URL_VERIFICACION_ACCESO}?email=${encodeURIComponent(email)}`);
+    const data = await resp.json();
+    return data.autorizado === true;
+  } catch (err) {
+    console.warn('No se pudo verificar el acceso:', err);
+    return false;
+  }
+}
+
 function handleAuthClick() {
   tokenClient.callback = async (resp) => {
     if (resp.error) throw (resp);
+
+    document.getElementById('status').innerText = 'Verificando acceso...';
+    const email = await obtenerCorreoUsuario();
+    const autorizado = await verificarAccesoUsuario(email);
+
+    if (!autorizado) {
+      mostrarDialogo({
+        titulo: 'Acceso no autorizado',
+        mensaje: `La cuenta ${email || 'conectada'} no tiene acceso habilitado a esta aplicación. Si creés que esto es un error, contactá al administrador.`
+      });
+      gapi.client.setToken(null); // limpia el token de esta sesión — no queda "medio conectado"
+      document.getElementById('status').innerText = 'Listo para conectar.';
+      return;
+    }
+
     document.getElementById('auth-section').classList.add('hidden');
     document.getElementById('main-app').classList.remove('hidden');
     // El cálculo inicial de las flechas (en inicializarNavPestanas, al cargar
