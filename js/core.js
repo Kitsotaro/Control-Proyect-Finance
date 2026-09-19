@@ -125,20 +125,25 @@ async function verificarAccesoUsuario(email) {
 }
 
 function handleAuthClick() {
+  const btnLogin = document.getElementById('btn-login');
+
   tokenClient.callback = async (resp) => {
     if (resp.error) throw (resp);
 
-    document.getElementById('status').innerText = 'Verificando acceso...';
+    btnLogin.disabled = true;
+    btnLogin.textContent = 'Verificando acceso...';
+
     const email = await obtenerCorreoUsuario();
     const autorizado = await verificarAccesoUsuario(email);
 
     if (!autorizado) {
       mostrarDialogo({
-        titulo: 'Acceso no autorizado',
-        mensaje: `La cuenta ${email || 'conectada'} no tiene acceso habilitado a esta aplicación. Si creés que esto es un error, contactá al administrador.`
+        titulo: 'Sin autorización',
+        mensaje: 'Sin autorización, por favor contactar a Kitsotaro para acceso.'
       });
       gapi.client.setToken(null); // limpia el token de esta sesión — no queda "medio conectado"
-      document.getElementById('status').innerText = 'Listo para conectar.';
+      btnLogin.disabled = false;
+      btnLogin.textContent = 'Iniciar Sesión con Google';
       return;
     }
 
